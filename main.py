@@ -13,6 +13,9 @@ class QuadraticPlotApp:
 
         self.last_params: tuple[float, float, float, float, float, float, float] | None = None
         self.cursor_in_canvas = False
+        self.is_dragging = False
+        self.drag_last_x = 0
+        self.drag_last_y = 0
 
         self._build_ui()
         self.plot_graph()
@@ -76,6 +79,9 @@ class QuadraticPlotApp:
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind("<Enter>", self._on_canvas_enter)
         self.canvas.bind("<Leave>", self._on_canvas_leave)
+        self.canvas.bind("<ButtonPress-1>", self._on_pan_start)
+        self.canvas.bind("<B1-Motion>", self._on_pan_move)
+        self.canvas.bind("<ButtonRelease-1>", self._on_pan_end)
         self.root.bind_all("<MouseWheel>", self._on_mouse_wheel)  # Windows/macOS
         self.root.bind_all("<Button-4>", self._on_mouse_wheel)    # Linux up
         self.root.bind_all("<Button-5>", self._on_mouse_wheel)    # Linux down
@@ -151,6 +157,62 @@ class QuadraticPlotApp:
 
     def _on_canvas_leave(self, _event: tk.Event) -> None:
         self.cursor_in_canvas = False
+        self.is_dragging = False
+
+    def _on_pan_start(self, event: tk.Event) -> None:
+        if self.last_params is None:
+            return
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        left_pad = 55
+        right_pad = 20
+        top_pad = 20
+        bottom_pad = 40
+        plot_w = max(10, width - left_pad - right_pad)
+        plot_h = max(10, height - top_pad - bottom_pad)
+
+        if left_pad <= event.x <= left_pad + plot_w and top_pad <= event.y <= top_pad + plot_h:
+            self.is_dragging = True
+            self.drag_last_x = event.x
+            self.drag_last_y = event.y
+
+    def _on_pan_move(self, event: tk.Event) -> None:
+        if not self.is_dragging or self.last_params is None:
+            return
+
+        a, b, c, xmin, xmax, ymin, ymax = self.last_params
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        left_pad = 55
+        right_pad = 20
+        top_pad = 20
+        bottom_pad = 40
+        plot_w = max(10, width - left_pad - right_pad)
+        plot_h = max(10, height - top_pad - bottom_pad)
+
+        dx_px = event.x - self.drag_last_x
+        dy_px = event.y - self.drag_last_y
+
+        self.drag_last_x = event.x
+        self.drag_last_y = event.y
+
+        x_span = xmax - xmin
+        y_span = ymax - ymin
+        dx_data = dx_px * x_span / plot_w
+        dy_data = dy_px * y_span / plot_h
+
+        new_xmin = xmin - dx_data
+        new_xmax = xmax - dx_data
+        new_ymin = ymin + dy_data
+        new_ymax = ymax + dy_data
+
+        self._apply_view(a, b, c, new_xmin, new_xmax, new_ymin, new_ymax)
+        self.canvas.update_idletasks()
+
+    def _on_pan_end(self, _event: tk.Event) -> None:
+        self.is_dragging = False
 
     def _apply_view(self, a: float, b: float, c: float, xmin: float, xmax: float, ymin: float, ymax: float) -> None:
         self.xmin_var.set(self._format_range(xmin))
@@ -336,18 +398,101 @@ class QuadraticPlotApp:
                 current_len = tick_len_half if yi10 % 10 == 5 else tick_len_minor
                 self.canvas.create_line(y_axis_x - current_len, py, y_axis_x + current_len, py, fill="black", width=1)
 
+        def clip_segment_to_rect(
+            x1: float, y1: float, x2: float, y2: float
+        ) -> tuple[float, float, float, float] | None:
+            # Cohen-Sutherland line clipping.
+            INSIDE = 0
+            LEFT = 1
+            RIGHT = 2
+            BOTTOM = 4
+            TOP = 8
+
+            def code(x: float, y: float) -> int:
+                out = INSIDE
+                if x < xmin:
+                    out |= LEFT
+                elif x > xmax:
+                    out |= RIGHT
+                if y < ymin:
+                    out |= BOTTOM
+                elif y > ymax:
+                    out |= TOP
+                return out
+
+            c1 = code(x1, y1)
+            c2 = code(x2, y2)
+
+            while True:
+                if (c1 | c2) == 0:
+                    return (x1, y1, x2, y2)
+                if (c1 & c2) != 0:
+                    return None
+
+                out = c1 if c1 != 0 else c2
+
+                if out & TOP:
+                    x = x1 + (x2 - x1) * (ymax - y1) / (y2 - y1)
+                    y = ymax
+                elif out & BOTTOM:
+                    x = x1 + (x2 - x1) * (ymin - y1) / (y2 - y1)
+                    y = ymin
+                elif out & RIGHT:
+                    y = y1 + (y2 - y1) * (xmax - x1) / (x2 - x1)
+                    x = xmax
+                else:  # LEFT
+                    y = y1 + (y2 - y1) * (xmin - x1) / (x2 - x1)
+                    x = xmin
+
+                if out == c1:
+                    x1, y1 = x, y
+                    c1 = code(x1, y1)
+                else:
+                    x2, y2 = x, y
+                    c2 = code(x2, y2)
+
         points_count = max(200, min(3000, int(plot_w * 2)))
         step = (xmax - xmin) / (points_count - 1)
-        coords: list[float] = []
+        polyline: list[float] = []
+        prev_clip_end: tuple[float, float] | None = None
 
-        for i in range(points_count):
-            x = xmin + i * step
-            y = a * x * x + b * x + c
-            px, py = to_px(x, y)
-            coords.extend([px, py])
+        x_prev = xmin
+        y_prev = a * x_prev * x_prev + b * x_prev + c
 
-        if len(coords) >= 4:
-            self.canvas.create_line(*coords, fill="black", width=2, smooth=True)
+        for i in range(1, points_count):
+            x_cur = xmin + i * step
+            y_cur = a * x_cur * x_cur + b * x_cur + c
+
+            clipped = clip_segment_to_rect(x_prev, y_prev, x_cur, y_cur)
+            if clipped is None:
+                if len(polyline) >= 4:
+                    self.canvas.create_line(*polyline, fill="black", width=2)
+                polyline = []
+                prev_clip_end = None
+            else:
+                cx1, cy1, cx2, cy2 = clipped
+                p1 = to_px(cx1, cy1)
+                p2 = to_px(cx2, cy2)
+
+                if not polyline:
+                    polyline.extend([p1[0], p1[1], p2[0], p2[1]])
+                else:
+                    if prev_clip_end is not None:
+                        dx = abs(prev_clip_end[0] - p1[0])
+                        dy = abs(prev_clip_end[1] - p1[1])
+                        if dx > 0.5 or dy > 0.5:
+                            if len(polyline) >= 4:
+                                self.canvas.create_line(*polyline, fill="black", width=2)
+                            polyline = [p1[0], p1[1], p2[0], p2[1]]
+                        else:
+                            polyline.extend([p2[0], p2[1]])
+
+                prev_clip_end = p2
+
+            x_prev, y_prev = x_cur, y_cur
+
+        if len(polyline) >= 4:
+            self.canvas.create_line(*polyline, fill="black", width=2)
 
         # Axis names.
         if x_axis_y is not None:
