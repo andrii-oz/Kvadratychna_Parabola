@@ -173,6 +173,28 @@ class QuadraticPlotApp:
             _, x_axis_y = to_px(xmin, 0)
             self.canvas.create_line(left_pad, x_axis_y, left_pad + plot_w, x_axis_y, fill="black", width=2)
 
+        # Direction arrows for axes.
+        if x_axis_y is not None:
+            self.canvas.create_line(
+                left_pad + plot_w - 20,
+                x_axis_y,
+                left_pad + plot_w - 2,
+                x_axis_y,
+                fill="black",
+                width=2,
+                arrow=tk.LAST,
+            )
+        if y_axis_x is not None:
+            self.canvas.create_line(
+                y_axis_x,
+                top_pad + 20,
+                y_axis_x,
+                top_pad + 2,
+                fill="black",
+                width=2,
+                arrow=tk.LAST,
+            )
+
         # Tick marks and labels on axes at each integer.
         tick_len_major = 6
         tick_len_half = 4
