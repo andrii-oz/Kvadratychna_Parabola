@@ -12,6 +12,7 @@ class QuadraticPlotApp:
         self.root.minsize(900, 600)
 
         self.last_params: tuple[float, float, float, float, float, float, float] | None = None
+        self.cursor_in_canvas = False
 
         self._build_ui()
         self.plot_graph()
@@ -73,6 +74,11 @@ class QuadraticPlotApp:
         )
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.canvas.bind("<Enter>", self._on_canvas_enter)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
+        self.root.bind_all("<MouseWheel>", self._on_mouse_wheel)  # Windows/macOS
+        self.root.bind_all("<Button-4>", self._on_mouse_wheel)    # Linux up
+        self.root.bind_all("<Button-5>", self._on_mouse_wheel)    # Linux down
 
     @staticmethod
     def _add_labeled_entry(parent: ttk.Frame, label_text: str, variable: tk.StringVar) -> None:
@@ -86,6 +92,13 @@ class QuadraticPlotApp:
         if abs(value - round(value)) < 1e-10:
             return str(int(round(value)))
         return f"{value:.4f}"
+
+    @staticmethod
+    def _format_range(value: float) -> str:
+        if abs(value) < 1e-12:
+            value = 0.0
+        text = f"{value:.6f}".rstrip("0").rstrip(".")
+        return text if text else "0"
 
     def _calculate_intersections(self, a: float, b: float, c: float) -> str:
         lines: list[str] = []
@@ -127,7 +140,82 @@ class QuadraticPlotApp:
         self.a_var.set("1")
         self.b_var.set("0")
         self.c_var.set("0")
+        self.xmin_var.set("-10")
+        self.xmax_var.set("10")
+        self.ymin_var.set("-10")
+        self.ymax_var.set("10")
         self.plot_graph()
+
+    def _on_canvas_enter(self, _event: tk.Event) -> None:
+        self.cursor_in_canvas = True
+
+    def _on_canvas_leave(self, _event: tk.Event) -> None:
+        self.cursor_in_canvas = False
+
+    def _apply_view(self, a: float, b: float, c: float, xmin: float, xmax: float, ymin: float, ymax: float) -> None:
+        self.xmin_var.set(self._format_range(xmin))
+        self.xmax_var.set(self._format_range(xmax))
+        self.ymin_var.set(self._format_range(ymin))
+        self.ymax_var.set(self._format_range(ymax))
+
+        self.last_params = (a, b, c, xmin, xmax, ymin, ymax)
+        self._draw_graph(a, b, c, xmin, xmax, ymin, ymax)
+        self.intersections_label.config(text=self._calculate_intersections(a, b, c))
+
+    def _on_mouse_wheel(self, event: tk.Event) -> None:
+        if self.last_params is None:
+            return
+        if not self.cursor_in_canvas:
+            return
+
+        a, b, c, xmin, xmax, ymin, ymax = self.last_params
+
+        direction = 0
+        if hasattr(event, "delta") and event.delta:
+            direction = 1 if event.delta > 0 else -1
+        elif getattr(event, "num", 0) == 4:
+            direction = 1
+        elif getattr(event, "num", 0) == 5:
+            direction = -1
+
+        if direction == 0:
+            return
+
+        zoom_factor = 0.90 if direction > 0 else 1.10
+
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        left_pad = 55
+        right_pad = 20
+        top_pad = 20
+        bottom_pad = 40
+        plot_w = max(10, width - left_pad - right_pad)
+        plot_h = max(10, height - top_pad - bottom_pad)
+
+        pointer_x = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx()
+        pointer_y = self.canvas.winfo_pointery() - self.canvas.winfo_rooty()
+
+        if left_pad <= pointer_x <= left_pad + plot_w and top_pad <= pointer_y <= top_pad + plot_h:
+            x_center = xmin + (pointer_x - left_pad) * (xmax - xmin) / plot_w
+            y_center = ymax - (pointer_y - top_pad) * (ymax - ymin) / plot_h
+        else:
+            x_center = (xmin + xmax) / 2
+            y_center = (ymin + ymax) / 2
+
+        new_xmin = x_center - (x_center - xmin) * zoom_factor
+        new_xmax = x_center + (xmax - x_center) * zoom_factor
+        new_ymin = y_center - (y_center - ymin) * zoom_factor
+        new_ymax = y_center + (ymax - y_center) * zoom_factor
+
+        min_span = 1e-4
+        max_span = 1e8
+        if (new_xmax - new_xmin) < min_span or (new_ymax - new_ymin) < min_span:
+            return
+        if (new_xmax - new_xmin) > max_span or (new_ymax - new_ymin) > max_span:
+            return
+
+        self._apply_view(a, b, c, new_xmin, new_xmax, new_ymin, new_ymax)
+        self.canvas.update_idletasks()
 
     def _draw_graph(self, a: float, b: float, c: float, xmin: float, xmax: float, ymin: float, ymax: float) -> None:
         self.canvas.delete("all")
@@ -293,9 +381,7 @@ class QuadraticPlotApp:
             messagebox.showerror("Помилка", "Мінімум має бути менший за максимум для обох осей.")
             return
 
-        self.last_params = (a, b, c, xmin, xmax, ymin, ymax)
-        self._draw_graph(a, b, c, xmin, xmax, ymin, ymax)
-        self.intersections_label.config(text=self._calculate_intersections(a, b, c))
+        self._apply_view(a, b, c, xmin, xmax, ymin, ymax)
 
 
 def main() -> None:
