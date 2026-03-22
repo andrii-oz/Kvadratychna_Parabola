@@ -11,7 +11,6 @@ class QuadraticPlotApp:
         self.root.geometry("1200x700")
         self.root.minsize(900, 600)
 
-        self.is_zoomed = False
         self.last_params: tuple[float, float, float, float, float, float, float] | None = None
 
         self._build_ui()
@@ -24,7 +23,7 @@ class QuadraticPlotApp:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(0, weight=1)
 
-        left_panel = ttk.Frame(main_frame, width=280, padding=(10, 10, 15, 10))
+        left_panel = ttk.Frame(main_frame, width=300, padding=(10, 10, 15, 10))
         left_panel.grid(row=0, column=0, sticky="nsw")
 
         graph_panel = ttk.Frame(main_frame)
@@ -59,9 +58,10 @@ class QuadraticPlotApp:
         btn_frame = ttk.Frame(left_panel)
         btn_frame.pack(fill="x", pady=(12, 8))
         ttk.Button(btn_frame, text="Побудувати графік", command=self.plot_graph).pack(fill="x")
+        ttk.Button(btn_frame, text="Скинути", command=self.reset_coefficients).pack(fill="x", pady=(6, 0))
 
         ttk.Separator(left_panel, orient="horizontal").pack(fill="x", pady=8)
-        ttk.Label(left_panel, text="Точки перетину з осями").pack(anchor="w")
+        ttk.Label(left_panel, text="Вершина та перетини з осями").pack(anchor="w")
         self.intersections_label = ttk.Label(left_panel, text="", justify="left")
         self.intersections_label.pack(anchor="w", pady=(4, 0))
 
@@ -81,10 +81,6 @@ class QuadraticPlotApp:
         ttk.Label(line, text=label_text, width=8).pack(side="left")
         ttk.Entry(line, textvariable=variable).pack(side="left", fill="x", expand=True)
 
-    def toggle_zoom(self) -> None:
-        self.is_zoomed = not self.is_zoomed
-        self.root.state("zoomed" if self.is_zoomed else "normal")
-
     @staticmethod
     def _format_num(value: float) -> str:
         if abs(value - round(value)) < 1e-10:
@@ -92,7 +88,16 @@ class QuadraticPlotApp:
         return f"{value:.4f}"
 
     def _calculate_intersections(self, a: float, b: float, c: float) -> str:
-        lines = [f"З віссю OY: (0; {self._format_num(c)})"]
+        lines: list[str] = []
+
+        if abs(a) < 1e-12:
+            lines.append("Вершина: не визначена (лінійна функція)")
+        else:
+            vx = -b / (2 * a)
+            vy = a * vx * vx + b * vx + c
+            lines.append(f"Вершина: ({self._format_num(vx)}; {self._format_num(vy)})")
+
+        lines.append(f"З віссю OY: (0; {self._format_num(c)})")
 
         if abs(a) < 1e-12:
             if abs(b) < 1e-12:
@@ -118,6 +123,12 @@ class QuadraticPlotApp:
             lines.append(f"З віссю OX: ({self._format_num(x1)}; 0), ({self._format_num(x2)}; 0)")
         return "\n".join(lines)
 
+    def reset_coefficients(self) -> None:
+        self.a_var.set("1")
+        self.b_var.set("0")
+        self.c_var.set("0")
+        self.plot_graph()
+
     def _draw_graph(self, a: float, b: float, c: float, xmin: float, xmax: float, ymin: float, ymax: float) -> None:
         self.canvas.delete("all")
 
@@ -126,7 +137,7 @@ class QuadraticPlotApp:
         if width < 20 or height < 20:
             return
 
-        left_pad = 50
+        left_pad = 55
         right_pad = 20
         top_pad = 20
         bottom_pad = 40
@@ -199,6 +210,7 @@ class QuadraticPlotApp:
         tick_len_major = 6
         tick_len_half = 4
         tick_len_minor = 2
+
         if x_axis_y is not None:
             for xv in range(x_start, x_end + 1):
                 px, _ = to_px(float(xv), 0.0)
